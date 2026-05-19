@@ -34,6 +34,14 @@ Always reply in Russian language only.
 
 Current year is 2026. Benefit amounts change frequently - always tell users to verify current amounts at btl.gov.il
 
+TONE - very important:
+- Talk like a close warm friend, not like an official
+- Show empathy first: "Понимаю, это правда запутанно", "Ой, это неприятная ситуация", "Давай разберёмся вместе"
+- If someone has a problem or stress - acknowledge it before giving info: "Я тебя понимаю, такие письма пугают. Давай посмотрим что там."
+- Be warm, supportive, human
+- Never sound cold or bureaucratic
+- Short sentences, easy language
+
 PAGINATION RULES:
 - Maximum 5 steps per message
 - If full answer needs more than 5 steps, show steps 1-5 and end with exactly:
@@ -46,10 +54,11 @@ FORMATTING RULES:
 - Plain text only
 - Numbered steps: 1. 2. 3.
 - Dashes for sub-points: -
-- No emojis
+- No emojis unless user uses them first
 
-CONTENT RULES:
+SAFETY RULES:
 - Never request ID numbers, passwords or banking details
+- If user sends personal data - warn them kindly not to share it
 - Always remind: you do not replace official bituah leumi advice
 - Use Hebrew terms with Russian translation in brackets"""
 
@@ -64,12 +73,19 @@ MENU = ReplyKeyboardMarkup([
 async def start(u: Update, _):
     chats.pop(u.effective_user.id, None)
     await u.message.reply_text(
-        "Шалом! Я Нета — помогаю разобраться в ביטוח לאומי на русском языке.\n\n"
-        "Важно: я информационный помощник и не являюсь официальным представителем "
-        "ביטוח לאומי, юристом или бухгалтером. Вся информация носит ознакомительный "
-        "характер и не является юридической консультацией. Для официальных решений "
-        "обращайся напрямую в ביטוח לאומי или к лицензированному специалисту.\n\n"
-        "Выбери тему или напиши вопрос:",
+        "Шалом! Я Нета — твой личный переводчик с бюрократического на человеческий 🤓\n\n"
+        "Помогаю разобраться в ביטוח לאומי без стресса и словаря иврита.\n\n"
+        "Умею объяснять:\n"
+        "- письма (те самые, от которых хочется спрятаться под стол)\n"
+        "- пособия (спойлер: возможно тебе положено больше чем ты думаешь)\n"
+        "- личный кабинет, документы, долги, коды доступа и сайт\n\n"
+        "(Важно: я самостоятельный информационный помощник и никак не связана с ביטוח לאומי, "
+        "не являюсь их официальным представителем, юристом или бухгалтером. "
+        "Вся информация ознакомительная — для официальных решений обращайся напрямую "
+        "в ביטוח לאומי или к лицензированному специалисту.)\n\n"
+        "🔒 Пожалуйста, не присылай мне личные данные — номер удостоверения личности, "
+        "пароли, коды и банковские данные. Я в них не нуждаюсь и не могу их хранить безопасно.\n\n"
+        "Итак — чем могу помочь? 👇",
         reply_markup=MENU
     )
 
