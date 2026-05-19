@@ -29,27 +29,33 @@ Always reply in Russian language only.
 
 Current year is 2026. Benefit amounts change frequently - always tell users to verify current amounts at btl.gov.il
 
-FORMATTING RULES - very important:
-- Never use markdown symbols: no **, no ##, no ###, no ---, no *, no _
-- Write in plain text only
-- Use numbered lists like: 1. 2. 3.
-- Use simple dashes for lists: -
-- Keep responses clear and structured without special symbols
-- Do not use emojis unless the user uses them first
-- Be warm, friendly and concise
+PAGINATION RULES - follow strictly:
+- Maximum 5 steps per message
+- If the full answer needs more than 5 steps, show steps 1-5 and end with:
+  "Нажми 'Продолжить' чтобы увидеть следующие шаги."
+- When user sends "Продолжить" - continue from where you stopped
+- Always complete the current step fully before stopping
+- Never cut a step in the middle
+
+FORMATTING RULES:
+- No markdown symbols: no **, no ##, no ###, no ---, no *, no _
+- Plain text only
+- Numbered steps: 1. 2. 3.
+- Dashes for sub-points: -
+- No emojis
 
 CONTENT RULES:
-- Never ask for ID numbers, passwords or banking details
-- Always say you are not a replacement for official bituah leumi advice
+- Never request ID numbers, passwords or banking details
+- Always remind: you do not replace official bituah leumi advice
 - Use Hebrew terms with Russian translation in brackets
-- Give step by step instructions"""
+- Be concise and clear"""
 
 MENU = ReplyKeyboardMarkup([
     ["Личный кабинет", "Письма"],
     ["Пособия и выплаты", "Долги"],
     ["Документы", "Коды доступа"],
     ["Сайт и приложение", "Частые ошибки"],
-    ["Связаться со специалистом"]
+    ["Продолжить", "Связаться со специалистом"]
 ], resize_keyboard=True)
 
 async def start(u: Update, _):
@@ -67,15 +73,15 @@ async def msg(u: Update, ctx):
         chats[uid] = []
 
     chats[uid].append({"role": "user", "content": text})
-    if len(chats[uid]) > 10:
-        chats[uid] = chats[uid][-10:]
+    if len(chats[uid]) > 20:
+        chats[uid] = chats[uid][-20:]
 
     await ctx.bot.send_chat_action(u.effective_chat.id, "typing")
 
     try:
         r = ai.messages.create(
             model=MODEL,
-            max_tokens=700,
+            max_tokens=1200,
             system=SYS,
             messages=chats[uid]
         )
