@@ -1,12 +1,19 @@
+# -*- coding: utf-8 -*-
 """
-НЕТА — Telegram-бот помощник по ביטוח לאומי
-Автор: создан с помощью Claude (Anthropic)
+NETA — Telegram bot for Bituah Leumi help
 """
 
 import os
+import sys
 import logging
 import base64
 import anthropic
+
+# UTF-8 encoding fix
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8')
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup,
     KeyboardButton, ReplyKeyboardRemove
@@ -118,7 +125,7 @@ async def ask_neta(user_id: int, user_message_content) -> str:
 
     try:
         response = ai_client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-haiku-4-5",
             max_tokens=1000,
             system=SYSTEM_PROMPT,
             messages=history,
@@ -246,7 +253,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         history = get_history(user_id)
 
         response = ai_client.messages.create(
-            model=model="claude-sonnet-4-5",,
+            model="claude-haiku-4-5",
             max_tokens=1000,
             system=SYSTEM_PROMPT,
             messages=history,
