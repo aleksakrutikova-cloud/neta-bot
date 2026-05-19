@@ -125,7 +125,7 @@ async def ask_neta(user_id: int, user_message_content) -> str:
 
     try:
         response = ai_client.messages.create(
-            model="claude-3-5-haiku-20241022",
+            model="claude-haiku-4-5-20251001",
             max_tokens=1000,
             system=SYSTEM_PROMPT,
             messages=history,
@@ -253,7 +253,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         history = get_history(user_id)
 
         response = ai_client.messages.create(
-            model="claude-3-5-haiku-20241022",
+            model="claude-haiku-4-5-20251001",
             max_tokens=1000,
             system=SYSTEM_PROMPT,
             messages=history,
