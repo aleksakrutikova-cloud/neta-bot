@@ -246,7 +246,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         history = get_history(user_id)
 
         response = ai_client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=model="claude-sonnet-4-5",,
             max_tokens=1000,
             system=SYSTEM_PROMPT,
             messages=history,
