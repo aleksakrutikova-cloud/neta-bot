@@ -1,382 +1,150 @@
-# -*- coding: utf-8 -*-
-"""
-NETA — Telegram bot for Bituah Leumi help
-"""
-
 import os
 import sys
 import logging
-import base64
-import anthropic
-
-# UTF-8 encoding fix
-if hasattr(sys.stdout, 'reconfigure'):
-    sys.stdout.reconfigure(encoding='utf-8')
-if hasattr(sys.stderr, 'reconfigure'):
-    sys.stderr.reconfigure(encoding='utf-8')
-from telegram import (
-    Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup,
-    KeyboardButton, ReplyKeyboardRemove
-)
+from anthropic import Anthropic
+from telegram import Update, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
-    CallbackQueryHandler, ConversationHandler, filters, ContextTypes
+    ConversationHandler, filters, ContextTypes
 )
 
-# ─── Логирование ───────────────────────────────────────────────
-logging.basicConfig(
-    format="%(asctime)s | %(levelname)s | %(message)s",
-    level=logging.INFO
-)
+os.environ.setdefault("PYTHONUTF8", "1")
+sys.stdout.reconfigure(encoding="utf-8")
+sys.stderr.reconfigure(encoding="utf-8")
+
+logging.basicConfig(format="%(asctime)s %(levelname)s %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ─── Токены из переменных окружения ───────────────────────────
-TELEGRAM_TOKEN   = os.environ["TELEGRAM_TOKEN"]
+TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
-
-# ID чата куда приходят лиды (твой личный Telegram ID)
-# Узнать свой ID: написать @userinfobot в Telegram
 ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID", "")
 
-# ─── Anthropic клиент ─────────────────────────────────────────
-ai_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+client = Anthropic(api_key=ANTHROPIC_API_KEY)
 
-# ─── Состояния для сбора лида ─────────────────────────────────
-LEAD_NAME, LEAD_PHONE, LEAD_QUESTION = range(3)
+LEAD_NAME, LEAD_PHONE, LEAD_DESC = range(3)
 
-# ─── История диалогов (в памяти) ─────────────────────────────
-# Формат: { user_id: [ {role, content}, ... ] }
-user_histories: dict[int, list] = {}
-MAX_HISTORY = 20  # максимум сообщений в истории
+histories = {}
 
-# ─── Системный промт ──────────────────────────────────────────
-SYSTEM_PROMPT = """Ты — «Нета» (נטע), дружелюбный помощник по системе ביטוח לאומי (Национальный страховой институт Израиля).
+SYSTEM = """You are Neta, a friendly assistant helping Russian-speaking residents of Israel navigate the bituah leumi system (National Insurance Institute). Reply ONLY in Russian language.
 
-Твоя роль — НЕ юрист, НЕ бухгалтер, НЕ официальный представитель ביטוח לאומי. Ты — «умный друг, который уже разобрался в системе» и объясняет простым русским языком, что делать, куда нажать и где найти нужный документ.
+You explain in simple Russian: rights, benefits, letters, personal account, documents, access codes, website and app of bituah leumi.
 
-Ты говоришь с репатриантами и русскоязычными жителями Израиля.
+RULES:
+- Never ask for personal ID numbers, passwords, codes or banking details
+- If user sends personal data - warn them not to do this
+- On important topics add: I do not replace bituah leumi, a lawyer or accountant
+- Do not invent benefit amounts or laws - if unsure, say so
+- Use Hebrew for official terms with Russian translation in parentheses
+- Ask clarifying questions before answering
+- Give step-by-step instructions
+- Use emojis for structure"""
 
-ПРАВИЛА БЕЗОПАСНОСТИ — НЕЛЬЗЯ НАРУШАТЬ:
-1. НИКОГДА не запрашивай: מספר זהות, пароли, коды доступа, банковские данные, сканы документов с личными данными.
-2. Если пользователь присылает личные данные — немедленно предупреди: "⚠️ Стоп! Пожалуйста, не отправляй мне личные номера, пароли или коды. Я не могу и не должен их получать. Расскажи ситуацию словами — и я помогу разобраться."
-3. В важных темах добавляй: "📌 Я помогаю разобраться. Я не заменяю ביטוח לאומי, адвоката или бухгалтера."
-4. НИКОГДА не придумывай суммы пособий, даты, законы. Если не уверен — скажи об этом.
-5. Всегда используй иврит для официальных терминов с русским переводом в скобках.
+WELCOME = """Shalom! Ya *Neta* — pomogayu razobratsya v *bituah leumi* na ponyatnom russkom yazyke.
 
-ЛОГИКА ДИАЛОГА:
-- Сначала задай 1-2 уточняющих вопроса, потом давай конкретный ответ
-- Давай пошаговые инструкции с ивритскими названиями кнопок
-- После каждого ответа предлагай 2-3 варианта следующего шага
-- Ответы конкретные, не длиннее необходимого
-- Форматируй ответы с эмодзи, короткими абзацами. Используй *жирный* для важного (одна звёздочка с каждой стороны для Telegram markdown)
+Vyberi temu ili prosto napishi svoy vopros"""
 
-ТЕМЫ ПОМОЩИ:
-- כניסה לאזור האישי — Личный кабинет: как войти, восстановить доступ, что там есть
-- מכתבים והודעות — Письма: объяснять содержание писем от ביטוח לאומי
-- קצבאות ותגמולים — Пособия: קצבת ילדים, דמי לידה, קצבת אבטלה, הבטחת הכנסה, קצבת נכות и др.
-- חובות ותשלומים — Долги: объяснять долги, рассрочки, последствия
-- מסמכים ואישורים — Документы: где и как получить справки
-- קודי גישה — Коды доступа: процедуры получения, НЕ сами коды
-- אתר ואפליקציה — Сайт и приложение: навигация по btl.gov.il
-- טעויות נפוצות — Частые ошибки: типичные проблемы репатриантов
+def menu():
+    return ReplyKeyboardMarkup([
+        ["Lichnyy kabinet", "Pisma"],
+        ["Posobiya i vyplaty", "Dolgi"],
+        ["Dokumenty", "Kody dostupa"],
+        ["Sayt i prilozhenie", "Chastye oshibki"],
+        ["Svyazatsya so spetsialistom"],
+    ], resize_keyboard=True)
 
-Если прислали скриншот письма или сайта — проанализируй что на нём, объясни каждую часть простым языком, скажи что нужно сделать.
-
-Отвечай ТОЛЬКО на русском языке."""
-
-# ─── Главное меню ─────────────────────────────────────────────
-MENU_TEXT = """👋 Привет! Я *Нета* — помогаю разобраться в *ביטוח לאומי* на понятном русском языке.
-
-Выбери тему или просто напиши свой вопрос 👇"""
-
-def get_main_menu_keyboard():
-    """Возвращает клавиатуру главного меню."""
-    keyboard = [
-        [KeyboardButton("🔐 כניסה לאזור האישי — Личный кабинет")],
-        [KeyboardButton("📬 מכתבים — Письма и уведомления")],
-        [KeyboardButton("💳 קצבאות — Пособия и выплаты")],
-        [KeyboardButton("💰 חובות — Долги и платежи")],
-        [KeyboardButton("📄 מסמכים — Документы и справки")],
-        [KeyboardButton("🔑 קודי גישה — Коды доступа")],
-        [KeyboardButton("🌐 אתר ואפליקציה — Сайт и приложение")],
-        [KeyboardButton("⚠️ טעויות נפוצות — Частые ошибки")],
-        [KeyboardButton("👤 Связаться со специалистом")],
-    ]
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-
-# ─── Вспомогательные функции ──────────────────────────────────
-def get_history(user_id: int) -> list:
-    """Получить историю диалога пользователя."""
-    return user_histories.get(user_id, [])
-
-def add_to_history(user_id: int, role: str, content):
-    """Добавить сообщение в историю."""
-    if user_id not in user_histories:
-        user_histories[user_id] = []
-    user_histories[user_id].append({"role": role, "content": content})
-    # Обрезаем историю если слишком длинная
-    if len(user_histories[user_id]) > MAX_HISTORY:
-        user_histories[user_id] = user_histories[user_id][-MAX_HISTORY:]
-
-async def ask_neta(user_id: int, user_message_content) -> str:
-    """Отправить запрос к Claude и получить ответ."""
-    add_to_history(user_id, "user", user_message_content)
-    history = get_history(user_id)
-
+async def ask(user_id, text):
+    if user_id not in histories:
+        histories[user_id] = []
+    histories[user_id].append({"role": "user", "content": text})
+    if len(histories[user_id]) > 20:
+        histories[user_id] = histories[user_id][-20:]
     try:
-        response = ai_client.messages.create(
+        r = client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=1000,
-            system=SYSTEM_PROMPT,
-            messages=history,
+            max_tokens=800,
+            system=SYSTEM,
+            messages=histories[user_id],
         )
-        reply = response.content[0].text
-        add_to_history(user_id, "assistant", reply)
+        reply = r.content[0].text
+        histories[user_id].append({"role": "assistant", "content": reply})
         return reply
     except Exception as e:
-        logger.error("API Error: %s", str(e).encode("utf-8", errors="replace").decode("ascii", errors="replace"))
-        return "⚠️ Что-то пошло не так. Попробуй ещё раз через пару секунд."
+        logger.error("API error: %s", e)
+        return "Chto-to poshlo ne tak. Poprobuy eshche raz."
 
-def escape_md(text: str) -> str:
-    """Экранирование для MarkdownV2 (оставляем только базовый Markdown)."""
-    return text
+async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    histories.pop(update.effective_user.id, None)
+    await update.message.reply_text(WELCOME, reply_markup=menu(), parse_mode="Markdown")
 
-# ─── Хэндлеры команд ──────────────────────────────────────────
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /start — приветствие и главное меню."""
-    user_id = update.effective_user.id
-    user_histories[user_id] = []  # сбрасываем историю
+async def reset(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    histories.pop(update.effective_user.id, None)
+    await update.message.reply_text("Nachnem snachala!", reply_markup=menu())
 
-    await update.message.reply_text(
-        MENU_TEXT,
-        reply_markup=get_main_menu_keyboard(),
-        parse_mode="Markdown"
-    )
-
-async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /menu — показать главное меню."""
-    await update.message.reply_text(
-        "📋 Главное меню:",
-        reply_markup=get_main_menu_keyboard()
-    )
-
-async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /reset — сбросить историю диалога."""
-    user_id = update.effective_user.id
-    user_histories[user_id] = []
-    await update.message.reply_text(
-        "🔄 История диалога сброшена. Начнём сначала!\n\n" + MENU_TEXT,
-        reply_markup=get_main_menu_keyboard(),
-        parse_mode="Markdown"
-    )
-
-# ─── Хэндлер текстовых сообщений ─────────────────────────────
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка любого текстового сообщения."""
-    user_id = update.effective_user.id
+async def handle(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
+    uid = update.effective_user.id
 
-    # Кнопка специалиста — запускаем сбор лида
-    if "Связаться со специалистом" in text:
+    if "spetsialist" in text.lower() or "специалист" in text.lower():
         await update.message.reply_text(
-            "👤 Хорошо, свяжу тебя со специалистом!\n\n"
-            "Специалист по *ביטוח לאומי* может помочь с:\n"
-            "— обжалованием отказа (ערר)\n"
-            "— разбором долгов и рассрочкой\n"
-            "— сложными жизненными ситуациями\n\n"
-            "Как тебя зовут?",
-            parse_mode="Markdown",
+            "Svyazhu tebya so spetsialistom! Kak tebya zovut?",
             reply_markup=ReplyKeyboardRemove()
         )
         return LEAD_NAME
 
-    # Показываем «печатает...»
-    await context.bot.send_chat_action(
-        chat_id=update.effective_chat.id,
-        action="typing"
-    )
+    await ctx.bot.send_chat_action(update.effective_chat.id, "typing")
+    reply = await ask(uid, text)
+    await update.message.reply_text(reply, reply_markup=menu(), parse_mode="Markdown")
 
-    # Получаем ответ от Неты
-    reply = await ask_neta(user_id, text)
-
-    await update.message.reply_text(
-        reply,
-        parse_mode="Markdown",
-        reply_markup=get_main_menu_keyboard()
-    )
-
-# ─── Хэндлер фото / скриншотов ───────────────────────────────
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка скриншота или фото."""
-    user_id = update.effective_user.id
-
-    await update.message.reply_text(
-        "📸 Вижу скриншот! Анализирую...\n\n"
-        "⚠️ *Напоминание:* убедись, что на скриншоте нет твоего מספר זהות или пароля.",
-        parse_mode="Markdown"
-    )
-    await context.bot.send_chat_action(
-        chat_id=update.effective_chat.id, action="typing"
-    )
-
-    # Скачиваем фото
-    photo = update.message.photo[-1]  # берём самое большое
-    photo_file = await context.bot.get_file(photo.file_id)
-    photo_bytes = await photo_file.download_as_bytearray()
-    photo_b64 = base64.standard_b64encode(photo_bytes).decode("utf-8")
-
-    # Подпись пользователя (если есть)
-    caption = update.message.caption or "Объясни что на этом скриншоте"
-
-    # Запрос к Claude с изображением
-    message_content = [
-        {
-            "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": "image/jpeg",
-                "data": photo_b64,
-            },
-        },
-        {
-            "type": "text",
-            "text": f"Пользователь прислал скриншот. Его вопрос: {caption}\n\n"
-                    "Проанализируй что на скриншоте, объясни простым русским языком "
-                    "каждую часть. Если это письмо от ביטוח לאומי — объясни что оно значит "
-                    "и что нужно сделать. Если это страница сайта — объясни где находится "
-                    "человек и что нажать дальше."
-        }
-    ]
-
-    try:
-        add_to_history(user_id, "user", message_content)
-        history = get_history(user_id)
-
-        response = ai_client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=1000,
-            system=SYSTEM_PROMPT,
-            messages=history,
-        )
-        reply = response.content[0].text
-        add_to_history(user_id, "assistant", reply)
-
-        await update.message.reply_text(
-            reply,
-            parse_mode="Markdown",
-            reply_markup=get_main_menu_keyboard()
-        )
-    except Exception as e:
-        logger.error("Photo error: %s", e)
-        await update.message.reply_text(
-            "⚠️ Не удалось обработать скриншот. Попробуй описать ситуацию текстом.",
-            reply_markup=get_main_menu_keyboard()
-        )
-
-# ─── Сбор лида (ConversationHandler) ─────────────────────────
-async def lead_get_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Шаг 1: получаем имя."""
-    context.user_data["lead_name"] = update.message.text
-    await update.message.reply_text(
-        f"Отлично, *{update.message.text}*! 👋\n\n"
-        "Напиши свой номер телефона или Telegram-ник, "
-        "чтобы специалист мог с тобой связаться:",
-        parse_mode="Markdown"
-    )
+async def lead_name(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    ctx.user_data["name"] = update.message.text
+    await update.message.reply_text("Tvoy telefon ili Telegram?")
     return LEAD_PHONE
 
-async def lead_get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Шаг 2: получаем телефон."""
-    context.user_data["lead_phone"] = update.message.text
-    await update.message.reply_text(
-        "Кратко опиши свою ситуацию — чтобы специалист мог подготовиться "
-        "(или напиши *пропустить*):",
-        parse_mode="Markdown"
+async def lead_phone(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    ctx.user_data["phone"] = update.message.text
+    await update.message.reply_text("Kratko opishi svoy vopros (ili napishi - propustit):")
+    return LEAD_DESC
+
+async def lead_desc(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    u = update.effective_user
+    msg = (
+        "New lead!\n\n"
+        f"Name: {ctx.user_data.get('name')}\n"
+        f"Contact: {ctx.user_data.get('phone')}\n"
+        f"Question: {update.message.text}\n"
+        f"TG: @{u.username or '-'} | {u.id}"
     )
-    return LEAD_QUESTION
-
-async def lead_get_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Шаг 3: получаем вопрос, сохраняем лид."""
-    name     = context.user_data.get("lead_name", "—")
-    phone    = context.user_data.get("lead_phone", "—")
-    question = update.message.text
-    tg_user  = update.effective_user
-
-    # Формируем сообщение для администратора
-    lead_text = (
-        f"🔔 *Новый лид!*\n\n"
-        f"👤 Имя: {name}\n"
-        f"📱 Контакт: {phone}\n"
-        f"❓ Вопрос: {question}\n\n"
-        f"Telegram: @{tg_user.username or '—'} | ID: `{tg_user.id}`"
-    )
-
-    # Отправляем администратору
     if ADMIN_CHAT_ID:
         try:
-            await context.bot.send_message(
-                chat_id=ADMIN_CHAT_ID,
-                text=lead_text,
-                parse_mode="Markdown"
-            )
-            logger.info(f"Лид отправлен администратору: {name} / {phone}")
+            await ctx.bot.send_message(ADMIN_CHAT_ID, msg)
         except Exception as e:
-            logger.error("Lead send error: %s", e)
-
-    # Отвечаем пользователю
-    await update.message.reply_text(
-        "✅ *Отлично! Заявка отправлена.*\n\n"
-        "Специалист свяжется с тобой в ближайшее время.\n\n"
-        "А пока — я здесь, если появятся вопросы 👇",
-        parse_mode="Markdown",
-        reply_markup=get_main_menu_keyboard()
-    )
+            logger.error("Lead error: %s", e)
+    await update.message.reply_text("Zayavka otpravlena! Spetsialist svyazhetsya s toboy skoro.", reply_markup=menu())
     return ConversationHandler.END
 
-async def lead_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Отмена сбора лида."""
-    await update.message.reply_text(
-        "Хорошо, вернёмся к главному меню 👇",
-        reply_markup=get_main_menu_keyboard()
-    )
+async def lead_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("OK!", reply_markup=menu())
     return ConversationHandler.END
 
-# ─── Запуск бота ──────────────────────────────────────────────
 def main():
-    """Запуск бота."""
-    logger.info("Starting bot...")
-
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    # ConversationHandler для сбора лида
     lead_conv = ConversationHandler(
-        entry_points=[
-            MessageHandler(
-                filters.Regex("Связаться со специалистом"),
-                handle_text
-            )
-        ],
+        entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, handle)],
         states={
-            LEAD_NAME:     [MessageHandler(filters.TEXT & ~filters.COMMAND, lead_get_name)],
-            LEAD_PHONE:    [MessageHandler(filters.TEXT & ~filters.COMMAND, lead_get_phone)],
-            LEAD_QUESTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, lead_get_question)],
+            LEAD_NAME:  [MessageHandler(filters.TEXT & ~filters.COMMAND, lead_name)],
+            LEAD_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, lead_phone)],
+            LEAD_DESC:  [MessageHandler(filters.TEXT & ~filters.COMMAND, lead_desc)],
         },
         fallbacks=[CommandHandler("cancel", lead_cancel)],
     )
 
-    # Регистрируем хэндлеры
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("menu",  cmd_menu))
-    app.add_handler(CommandHandler("reset", cmd_reset))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("reset", reset))
     app.add_handler(lead_conv)
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-    logger.info("Bot started successfully")
-    app.run_polling(
-        allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=True
-    )
+    logger.info("Neta bot starting...")
+    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
